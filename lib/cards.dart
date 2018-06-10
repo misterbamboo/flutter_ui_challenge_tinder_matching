@@ -5,11 +5,19 @@ import 'package:fluttery/layout.dart';
 import 'package:prototype/photos.dart';
 
 class DraggableCard extends StatefulWidget {
+  final Match match;
+
+  DraggableCard({
+    this.match,
+  });
+
   @override
   _DraggableCardState createState() => new _DraggableCardState();
 }
 
 class _DraggableCardState extends State<DraggableCard> with TickerProviderStateMixin {
+  Decision decision;
+  GlobalKey profileCardKey = new GlobalKey(debugLabel: 'profile_card_key');
   Offset cardOffset = const Offset(0.0, 0.0);
   Offset dragStart;
   Offset dragBackStart;
@@ -21,6 +29,9 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
   @override
   void initState() {
     super.initState();
+
+    decision = widget.match.decision;
+
     dragBackAnimation = new AnimationController(
       duration: const Duration(milliseconds: 1000),
       vsync: this,
@@ -56,15 +67,81 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
             dragOutTween = null;
             dragPosition = null;
             cardOffset = const Offset(0.0, 0.0);
+
+            widget.match.reset();
           });
         }
       });
+
+    widget.match.addListener(_onMatchChange);
+  }
+
+  @override
+  void didUpdateWidget(DraggableCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (widget.match != oldWidget.match) {
+      oldWidget.match.removeListener(_onMatchChange);
+      widget.match.addListener(_onMatchChange);
+    }
   }
 
   @override
   void dispose() {
+    widget.match.removeListener(_onMatchChange);
     dragBackAnimation.dispose();
     super.dispose();
+  }
+
+  Offset _chooseRandomDragStart() {
+    final cardContext = profileCardKey.currentContext;
+    final cardTopLeft =
+        (cardContext.findRenderObject() as RenderBox).localToGlobal(const Offset(0.0, 0.0));
+    final dragStartY =
+        cardContext.size.height * (new Random().nextDouble() < 0.5 ? 0.25 : 0.75) + cardTopLeft.dy;
+    return new Offset(cardContext.size.width / 2 + cardTopLeft.dx, dragStartY);
+  }
+
+  void _nope() {
+    final screenWidth = context.size.width;
+    dragStart = _chooseRandomDragStart();
+    dragOutTween = new Tween(begin: const Offset(0.0, 0.0), end: new Offset(-2 * screenWidth, 0.0));
+    dragOutAnimation.forward(from: 0.0);
+  }
+
+  void _like() {
+    final screenWidth = context.size.width;
+    dragStart = _chooseRandomDragStart();
+    dragOutTween = new Tween(begin: const Offset(0.0, 0.0), end: new Offset(2 * screenWidth, 0.0));
+    dragOutAnimation.forward(from: 0.0);
+  }
+
+  void _superLike() {
+    final screenHeight = context.size.width;
+    dragStart = _chooseRandomDragStart();
+    dragOutTween =
+        new Tween(begin: const Offset(0.0, 0.0), end: new Offset(0.0, -2 * screenHeight));
+    dragOutAnimation.forward(from: 0.0);
+  }
+
+  void _onMatchChange() {
+    if (widget.match.decision != decision) {
+      switch (widget.match.decision) {
+        case Decision.nope:
+          _nope();
+          break;
+        case Decision.like:
+          _like();
+          break;
+        case Decision.superLike:
+          _superLike();
+          break;
+        default:
+          break;
+      }
+    }
+
+    decision = widget.match.decision;
   }
 
   void _onPanStart(DragStartDetails details) {
@@ -133,6 +210,7 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
               ..rotateZ(_rotation(anchorBounds)),
             origin: _rotationOrigin(anchorBounds),
             child: new Container(
+              key: profileCardKey,
               width: anchorBounds.width,
               height: anchorBounds.height,
               padding: const EdgeInsets.all(16.0),
@@ -155,6 +233,43 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
       new ProfileCard(),
     );
   }
+}
+
+class Match extends ChangeNotifier {
+  Decision decision = Decision.undecided;
+
+  void like() {
+    if (decision == Decision.undecided) {
+      decision = Decision.like;
+      notifyListeners();
+    }
+  }
+
+  void nope() {
+    if (decision == Decision.undecided) {
+      decision = Decision.nope;
+      notifyListeners();
+    }
+  }
+
+  void superLike() {
+    if (decision == Decision.undecided) {
+      decision = Decision.superLike;
+      notifyListeners();
+    }
+  }
+
+  void reset() {
+    decision = Decision.undecided;
+    notifyListeners();
+  }
+}
+
+enum Decision {
+  undecided,
+  nope,
+  like,
+  superLike,
 }
 
 class ProfileCard extends StatelessWidget {
