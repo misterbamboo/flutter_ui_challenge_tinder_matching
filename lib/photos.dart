@@ -5,9 +5,10 @@ class PhotoBrowser extends StatefulWidget {
   final int visiblePhotoIndex;
 
   PhotoBrowser({
+    Key key,
     this.photoAssetPaths,
     this.visiblePhotoIndex: 0,
-  });
+  }) : super(key: key);
 
   @override
   _PhotoBrowserState createState() => new _PhotoBrowserState();

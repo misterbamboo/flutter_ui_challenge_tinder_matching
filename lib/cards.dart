@@ -3,12 +3,148 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:fluttery/layout.dart';
 import 'package:prototype/photos.dart';
+import 'package:prototype/profiles.dart';
+
+class CardStack extends StatefulWidget {
+  final MatchEngine matchEngine;
+
+  CardStack({
+    this.matchEngine,
+  });
+
+  @override
+  _CardStackState createState() => new _CardStackState();
+}
+
+class _CardStackState extends State<CardStack> {
+  Key _frontCard;
+  double _nextCardScale = 0.9;
+  Match _currentMatch;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.matchEngine.addListener(_onMatchEngineChange);
+
+    _currentMatch = widget.matchEngine.currentMatch;
+    _currentMatch.addListener(_onMatchChange);
+
+    _frontCard = new Key(_currentMatch.profile.name);
+  }
+
+  @override
+  void dispose() {
+    _currentMatch.removeListener(_onMatchChange);
+    widget.matchEngine.removeListener(_onMatchEngineChange);
+    super.dispose();
+  }
+
+  void _onMatchEngineChange() {
+    _currentMatch.removeListener(_onMatchChange);
+    _currentMatch = widget.matchEngine.currentMatch;
+    _currentMatch.addListener(_onMatchChange);
+
+    _frontCard = new Key(_currentMatch.profile.name);
+
+    setState(() {/* current match may have switched, re-render */});
+  }
+
+  void _onMatchChange() {
+    setState(() {/* current match may have changed state, re-render */});
+  }
+
+  SlideDirection _desiredSlideOutDirection() {
+    switch (widget.matchEngine.currentMatch.decision) {
+      case Decision.nope:
+        return SlideDirection.left;
+      case Decision.like:
+        return SlideDirection.right;
+      case Decision.superLike:
+        return SlideDirection.up;
+      default:
+        return null;
+    }
+  }
+
+  Widget _buildBackCard() {
+    return new Transform(
+      transform: new Matrix4.identity()..scale(_nextCardScale, _nextCardScale),
+      alignment: Alignment.center,
+      child: new ProfileCard(
+        profile: widget.matchEngine.nextMatch.profile,
+      ),
+    );
+  }
+
+  Widget _buildFrontCard() {
+    return new ProfileCard(
+      key: _frontCard,
+      profile: widget.matchEngine.currentMatch.profile,
+    );
+  }
+
+  void _onSlideUpdate(double slideDistance) {
+    setState(() {
+      _nextCardScale = 0.9 + (0.1 * (slideDistance / 100.0)).clamp(0.0, 0.1);
+    });
+  }
+
+  void _onSlideOutComplete(SlideDirection direction) {
+    Match currentMatch = widget.matchEngine.currentMatch;
+
+    switch (direction) {
+      case SlideDirection.left:
+        if (currentMatch.decision != Decision.nope) {
+          currentMatch.nope();
+        }
+        break;
+      case SlideDirection.right:
+        if (currentMatch.decision != Decision.like) {
+          currentMatch.like();
+        }
+        break;
+      case SlideDirection.up:
+        if (currentMatch.decision != Decision.superLike) {
+          currentMatch.superLike();
+        }
+        break;
+    }
+
+    widget.matchEngine.cycleMatch();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return new Stack(
+      children: <Widget>[
+        new DraggableCard(
+          card: _buildBackCard(),
+          isDraggable: false,
+        ),
+        new DraggableCard(
+          card: _buildFrontCard(),
+          slideTo: _desiredSlideOutDirection(),
+          onSlideUpdate: _onSlideUpdate,
+          onSlideOutComplete: _onSlideOutComplete,
+        ),
+      ],
+    );
+  }
+}
 
 class DraggableCard extends StatefulWidget {
-  final Match match;
+  final Widget card;
+  final bool isDraggable;
+  final SlideDirection slideTo;
+  final Function(double distance) onSlideUpdate;
+  final Function(SlideDirection direction) onSlideOutComplete;
 
   DraggableCard({
-    this.match,
+    this.card,
+    this.isDraggable = true,
+    this.onSlideUpdate,
+    this.onSlideOutComplete,
+    this.slideTo,
   });
 
   @override
@@ -16,9 +152,9 @@ class DraggableCard extends StatefulWidget {
 }
 
 class _DraggableCardState extends State<DraggableCard> with TickerProviderStateMixin {
-  Decision decision;
   GlobalKey profileCardKey = new GlobalKey(debugLabel: 'profile_card_key');
   Offset cardOffset = const Offset(0.0, 0.0);
+  SlideDirection slideDirection;
   Offset dragStart;
   Offset dragBackStart;
   Offset dragPosition;
@@ -30,8 +166,6 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
   void initState() {
     super.initState();
 
-    decision = widget.match.decision;
-
     dragBackAnimation = new AnimationController(
       duration: const Duration(milliseconds: 1000),
       vsync: this,
@@ -42,6 +176,10 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
               const Offset(0.0, 0.0),
               Curves.elasticOut.transform(dragBackAnimation.value),
             );
+
+            if (null != widget.onSlideUpdate) {
+              widget.onSlideUpdate(cardOffset.distance);
+            }
           }))
       ..addStatusListener((AnimationStatus status) {
         if (status == AnimationStatus.completed) {
@@ -58,6 +196,10 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
       ..addListener(() {
         setState(() {
           cardOffset = dragOutTween.evaluate(dragOutAnimation);
+
+          if (null != widget.onSlideUpdate) {
+            widget.onSlideUpdate(cardOffset.distance);
+          }
         });
       })
       ..addStatusListener((AnimationStatus status) {
@@ -66,29 +208,42 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
             dragStart = null;
             dragOutTween = null;
             dragPosition = null;
-            cardOffset = const Offset(0.0, 0.0);
 
-            widget.match.reset();
+            if (null != widget.onSlideOutComplete) {
+              widget.onSlideOutComplete(slideDirection);
+            }
           });
         }
       });
-
-    widget.match.addListener(_onMatchChange);
   }
 
   @override
   void didUpdateWidget(DraggableCard oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    if (widget.match != oldWidget.match) {
-      oldWidget.match.removeListener(_onMatchChange);
-      widget.match.addListener(_onMatchChange);
+    if (widget.card.key != oldWidget.card.key) {
+      cardOffset = const Offset(0.0, 0.0);
     }
+
+    WidgetsBinding.instance.addPostFrameCallback((Duration duration) {
+      if (oldWidget.slideTo == null && widget.slideTo != null) {
+        switch (widget.slideTo) {
+          case SlideDirection.left:
+            _slideLeft();
+            break;
+          case SlideDirection.right:
+            _slideRight();
+            break;
+          case SlideDirection.up:
+            _slideUp();
+            break;
+        }
+      }
+    });
   }
 
   @override
   void dispose() {
-    widget.match.removeListener(_onMatchChange);
     dragBackAnimation.dispose();
     super.dispose();
   }
@@ -102,46 +257,26 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
     return new Offset(cardContext.size.width / 2 + cardTopLeft.dx, dragStartY);
   }
 
-  void _nope() {
+  void _slideLeft() {
     final screenWidth = context.size.width;
     dragStart = _chooseRandomDragStart();
     dragOutTween = new Tween(begin: const Offset(0.0, 0.0), end: new Offset(-2 * screenWidth, 0.0));
     dragOutAnimation.forward(from: 0.0);
   }
 
-  void _like() {
+  void _slideRight() {
     final screenWidth = context.size.width;
     dragStart = _chooseRandomDragStart();
     dragOutTween = new Tween(begin: const Offset(0.0, 0.0), end: new Offset(2 * screenWidth, 0.0));
     dragOutAnimation.forward(from: 0.0);
   }
 
-  void _superLike() {
+  void _slideUp() {
     final screenHeight = context.size.width;
     dragStart = _chooseRandomDragStart();
     dragOutTween =
         new Tween(begin: const Offset(0.0, 0.0), end: new Offset(0.0, -2 * screenHeight));
     dragOutAnimation.forward(from: 0.0);
-  }
-
-  void _onMatchChange() {
-    if (widget.match.decision != decision) {
-      switch (widget.match.decision) {
-        case Decision.nope:
-          _nope();
-          break;
-        case Decision.like:
-          _like();
-          break;
-        case Decision.superLike:
-          _superLike();
-          break;
-        default:
-          break;
-      }
-    }
-
-    decision = widget.match.decision;
   }
 
   void _onPanStart(DragStartDetails details) {
@@ -156,6 +291,10 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
     setState(() {
       dragPosition = details.globalPosition;
       cardOffset = details.globalPosition - dragStart;
+
+      if (null != widget.onSlideUpdate) {
+        widget.onSlideUpdate(cardOffset.distance);
+      }
     });
   }
 
@@ -169,9 +308,13 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
       if (isInNopeRegion || isInLikeRegion) {
         dragOutTween = new Tween(begin: cardOffset, end: dragVector * (2 * context.size.width));
         dragOutAnimation.forward(from: 0.0);
+
+        slideDirection = isInNopeRegion ? SlideDirection.left : SlideDirection.right;
       } else if (isInSuperLikeRegion) {
         dragOutTween = new Tween(begin: cardOffset, end: dragVector * (2 * context.size.height));
         dragOutAnimation.forward(from: 0.0);
+
+        slideDirection = SlideDirection.up;
       } else {
         dragBackStart = cardOffset;
         dragBackAnimation.forward(from: 0.0);
@@ -197,7 +340,8 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
     }
   }
 
-  Widget _buildOverlay(Widget profileCard) {
+  @override
+  Widget build(BuildContext context) {
     return new AnchoredOverlay(
       showOverlay: true,
       child: new Container(),
@@ -209,16 +353,16 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
             transform: new Matrix4.translationValues(cardOffset.dx, cardOffset.dy, 0.0)
               ..rotateZ(_rotation(anchorBounds)),
             origin: _rotationOrigin(anchorBounds),
-            child: new Container(
-              key: profileCardKey,
-              width: anchorBounds.width,
-              height: anchorBounds.height,
-              padding: const EdgeInsets.all(16.0),
-              child: new GestureDetector(
-                onPanStart: _onPanStart,
-                onPanUpdate: _onPanUpdate,
-                onPanEnd: _onPanEnd,
-                child: profileCard,
+            child: new GestureDetector(
+              onPanStart: widget.isDraggable ? _onPanStart : null,
+              onPanUpdate: widget.isDraggable ? _onPanUpdate : null,
+              onPanEnd: widget.isDraggable ? _onPanEnd : null,
+              child: new Container(
+                key: profileCardKey,
+                width: anchorBounds.width,
+                height: anchorBounds.height,
+                padding: const EdgeInsets.all(16.0),
+                child: widget.card,
               ),
             ),
           ),
@@ -226,17 +370,50 @@ class _DraggableCardState extends State<DraggableCard> with TickerProviderStateM
       },
     );
   }
+}
 
-  @override
-  Widget build(BuildContext context) {
-    return _buildOverlay(
-      new ProfileCard(),
-    );
+enum SlideDirection {
+  left,
+  right,
+  up,
+}
+
+class MatchEngine extends ChangeNotifier {
+  final List<Match> _profiles;
+  int _currentMatchIndex;
+  int _nextMatchIndex;
+
+  MatchEngine({
+    List<Match> matches,
+  }) : _profiles = matches {
+    _currentMatchIndex = 0;
+    _nextMatchIndex = 1;
+  }
+
+  Match get currentMatch => _profiles[_currentMatchIndex];
+
+  Match get nextMatch => _profiles[_nextMatchIndex];
+
+  void cycleMatch() {
+    if (currentMatch.decision != Decision.undecided) {
+      // This needs to come after removing the listener to avoid invoking this method again.
+      currentMatch.reset();
+
+      _currentMatchIndex = _nextMatchIndex;
+      _nextMatchIndex = _nextMatchIndex < _profiles.length - 1 ? _nextMatchIndex + 1 : 0;
+
+      notifyListeners();
+    }
   }
 }
 
 class Match extends ChangeNotifier {
+  final Profile profile;
   Decision decision = Decision.undecided;
+
+  Match({
+    this.profile,
+  });
 
   void like() {
     if (decision == Decision.undecided) {
@@ -272,15 +449,24 @@ enum Decision {
   superLike,
 }
 
-class ProfileCard extends StatelessWidget {
+class ProfileCard extends StatefulWidget {
+  final Profile profile;
+
+  ProfileCard({
+    Key key,
+    this.profile,
+  }) : super(key: key);
+
+  @override
+  ProfileCardState createState() {
+    return new ProfileCardState();
+  }
+}
+
+class ProfileCardState extends State<ProfileCard> {
   Widget _buildBackground() {
     return new PhotoBrowser(
-      photoAssetPaths: [
-        'assets/photo_1.jpg',
-        'assets/photo_2.jpg',
-        'assets/photo_3.jpg',
-        'assets/photo_4.jpg',
-      ],
+      photoAssetPaths: widget.profile.photos,
       visiblePhotoIndex: 0,
     );
   }
@@ -309,12 +495,12 @@ class ProfileCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  new Text('First Last',
+                  new Text(widget.profile.name,
                       style: new TextStyle(
                         color: Colors.white,
                         fontSize: 24.0,
                       )),
-                  new Text('Some description',
+                  new Text(widget.profile.bio,
                       style: new TextStyle(
                         color: Colors.white,
                         fontSize: 18.0,
