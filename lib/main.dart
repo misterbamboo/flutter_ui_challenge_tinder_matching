@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:prototype/cards.dart';
 import 'package:prototype/matches.dart';
+import 'package:prototype/profiles.dart';
 
 void main() => runApp(new MyApp());
+
+final MatchEngine matchEngine = new MatchEngine(
+  matches: demoProfiles.map((Profile profile) {
+    return new DateMatch(profile: profile);
+  }).toList(),
+);
 
 class MyApp extends StatelessWidget {
   @override
@@ -24,8 +31,6 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  DateMatch match = new DateMatch();
-
   Widget _buildAppBar() {
     return new AppBar(
       backgroundColor: Colors.transparent,
@@ -79,21 +84,21 @@ class _MyHomePageState extends State<MyHomePage> {
               icon: Icons.clear,
               iconColor: Colors.red,
               onPressed: () {
-                match.nope();
+                matchEngine.currentMatch.nope();
               },
             ),
             new RoundIconButton.small(
               icon: Icons.star,
               iconColor: Colors.blue,
               onPressed: () {
-                match.superLike();
+                matchEngine.currentMatch.superLike();
               },
             ),
             new RoundIconButton.large(
               icon: Icons.favorite,
               iconColor: Colors.green,
               onPressed: () {
-                match.like();
+                matchEngine.currentMatch.like();
               },
             ),
             new RoundIconButton.small(
@@ -113,8 +118,8 @@ class _MyHomePageState extends State<MyHomePage> {
   Widget build(BuildContext context) {
     return new Scaffold(
       appBar: _buildAppBar(),
-      body: new DraggableCard(
-        match: match,
+      body: new CardStack(
+        matchEngine: matchEngine,
       ),
       bottomNavigationBar: _buildBottomBar(),
     );
